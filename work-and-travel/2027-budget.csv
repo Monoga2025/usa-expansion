@@ -1,0 +1,10 @@
+escenario,concepto,monto_usd_hipotesis_bajo,monto_usd_hipotesis_base,monto_usd_hipotesis_alto,tipo_valor,base_para_validar,estado
+conservador,tarifa_del_programa_sponsor,1500,2500,4000,HIPOTESIS_no_cotizacion,Desglose escrito de tres sponsors designados; puede incluir o excluir seguro y SEVIS,PENDIENTE
+conservador,tramite_consular_J1,185,185,185,HIPOTESIS_referencia_no_tarifa_2027,Confirmar el cargo aplicable en Departamento de Estado/embajada antes de pagar,PENDIENTE
+conservador,SEVIS_I901,0,0,0,HIPOTESIS_excluida_hasta_confirmacion,El sponsor debe confirmar por escrito si corresponde y si esta incluido en su tarifa,PENDIENTE
+conservador,seguro_medico,200,400,600,HIPOTESIS_no_cotizacion,Confirmar cobertura regulatoria e inclusion por sponsor; no duplicar,PENDIENTE
+conservador,vuelo_ida_y_regreso,600,900,1200,HIPOTESIS_no_cotizacion,Cotizar ruta y equipaje despues de oferta y visa; no comprar antes,PENDIENTE
+conservador,vivienda_deposito_y_primeras_semanas,500,800,1200,HIPOTESIS_no_cotizacion,Validar alojamiento, deposito, fechas y distancia al empleo,PENDIENTE
+conservador,transporte_inicial_y_local,100,200,300,HIPOTESIS_no_cotizacion,Validar conexion aeropuerto-vivienda-trabajo,PENDIENTE
+conservador,fondo_de_llegada_y_contingencia,1000,1600,2500,HIPOTESIS_no_cotizacion,Definir reserva propia independiente del primer salario,PENDIENTE
+conservador,subtotal_provisional_sin_SEVIS,4085,6585,9985,HIPOTESIS_calculada,Suma de filas anteriores; no es costo oficial ni limite de fondos,PENDIENTE

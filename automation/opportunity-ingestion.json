@@ -1,0 +1,288 @@
+{
+  "name": "MVP seguro - Captura de oportunidades",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "0c5e66e6-5f35-4fd5-9ff4-1cb9c3f64ce1",
+      "name": "Ejecución manual de prueba",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -760,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "career-opportunity-ingest",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "3b6a8178-4b7d-43b2-9480-7273cbc0bd27",
+      "name": "Entrada webhook de fuentes aprobadas",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -760,
+        300
+      ],
+      "webhookId": "REPLACE_WITH_N8N_WEBHOOK_ID"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $json.body ?? $json;\nconst allowedSources = ['source_1_placeholder', 'source_2_placeholder', 'source_3_placeholder'];\nconst fixtureEvidence = [{ requirement: 'APIs y automatización', evidence_url: 'https://jobs.example.invalid/requisitos/apis', verified_at: '2026-09-28T12:00:00Z' }];\nconst fixture = [\n  { source_name: 'test_fixture', source_reference: 'fixture-001', job_url: 'https://jobs.example.invalid/nube/ai-automation-engineer?utm_source=test', company: 'Nube Ejemplo', title: 'AI Automation Engineer', country_code: 'CO', location: 'Remoto Colombia', modality: 'remoto_colombia_latam', posted_at: '2026-09-28', vacancy_summary: 'Vacante ficticia para automatización con APIs verificable en el enlace de evidencia.', requirement_evidence: fixtureEvidence, verified_at: '2026-09-28T12:00:00Z' },\n  { source_name: 'test_fixture', source_reference: 'fixture-002', job_url: 'https://jobs.example.invalid/flujo/automation-developer', company: 'Flujo Ficticio', title: 'Automation Developer', country_code: 'CO', location: 'Remoto Colombia', modality: 'remoto_colombia_latam', posted_at: '2026-09-28', vacancy_summary: 'Vacante ficticia de desarrollo de automatización con requisitos enlazados.', requirement_evidence: fixtureEvidence, verified_at: '2026-09-28T12:00:00Z' },\n  { source_name: 'test_fixture', source_reference: 'fixture-003', job_url: 'https://jobs.example.invalid/prisma/implementation-specialist', company: 'Prisma Demo', title: 'Implementation Specialist', country_code: 'US', location: 'Remote LATAM', modality: 'contractor_internacional', posted_at: '2026-09-28', vacancy_summary: 'Vacante ficticia de implementación con evidencia de requisitos públicos.', requirement_evidence: fixtureEvidence, verified_at: '2026-09-28T12:00:00Z' },\n  { source_name: 'test_fixture', source_reference: 'fixture-004', job_url: 'https://jobs.example.invalid/nube/ai-automation-engineer?ref=board-b', company: 'Nube Ejemplo', title: 'AI Automation Engineer', country_code: 'CO', location: 'Remoto Colombia', modality: 'remoto_colombia_latam', posted_at: '2026-09-28', vacancy_summary: 'Vacante ficticia para automatización con APIs verificable en el enlace de evidencia.', requirement_evidence: fixtureEvidence, verified_at: '2026-09-28T12:00:00Z' }\n];\nconst testMode = input.test_mode === true || $execution.mode === 'manual';\nconst records = testMode ? fixture : input.source_records;\nif (!Array.isArray(records) || records.length === 0) throw new Error('No hay registros de entrada. El modo productivo exige source_records del contrato.');\nconst sources = [...new Set(records.map((record) => record.source_name))];\nif (sources.length > 3) throw new Error('El MVP permite como máximo tres fuentes por ejecución.');\nif (!testMode && sources.some((source) => !allowedSources.includes(source))) throw new Error('Fuente no aprobada. Registrar y activar la fuente antes de ingerir.');\nreturn records.map((record) => ({ json: { ...record, test_mode: testMode } }));"
+      },
+      "id": "e0b6c370-96b3-49fd-a6b2-e3045ea559c3",
+      "name": "Validar lote y cargar fixture",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -500,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const required = ['source_name', 'source_reference', 'job_url', 'company', 'title', 'country_code', 'modality', 'vacancy_summary', 'verified_at'];\nfor (const field of required) {\n  if (typeof $json[field] !== 'string' || !$json[field].trim()) throw new Error(`Campo obligatorio inválido: ${field}`);\n}\nif (!/^[A-Z]{2}$/.test($json.country_code.trim().toUpperCase())) throw new Error('country_code debe ser ISO-3166 alpha-2.');\nif (Number.isNaN(Date.parse($json.verified_at))) throw new Error('verified_at debe ser fecha/hora ISO válida.');\nconst normalizeText = (value) => value.trim().toLowerCase().normalize('NFKD').replace(/[\\u0300-\\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim().replace(/\\s+/g, ' ');\nconst canonicalUrl = (value) => {\n  const url = new URL(value.trim());\n  if (!['https:', 'http:'].includes(url.protocol)) throw new Error('La URL debe usar HTTP(S).');\n  url.hash = '';\n  for (const key of [...url.searchParams.keys()]) {\n    if (/^(utm_[a-z]+|ref|source|trk|tracking|fbclid|gclid)$/i.test(key)) url.searchParams.delete(key);\n  }\n  url.hostname = url.hostname.toLowerCase();\n  url.pathname = url.pathname.replace(/\\/{2,}/g, '/').replace(/\\/$/, '') || '/';\n  return url.toString().replace(/\\/$/, '');\n};\nconst summary = $json.vacancy_summary.trim().replace(/\\s+/g, ' ');\nif (summary.length < 20 || summary.length > 4000 || /<[^>]+>/.test(summary)) throw new Error('vacancy_summary debe ser texto verificable de 20 a 4000 caracteres, sin HTML.');\nif (!Array.isArray($json.requirement_evidence) || $json.requirement_evidence.length === 0 || $json.requirement_evidence.length > 20) throw new Error('requirement_evidence debe ser un arreglo de 1 a 20 evidencias.');\nconst requirement_evidence = $json.requirement_evidence.map((evidence) => {\n  if (!evidence || typeof evidence.requirement !== 'string' || !evidence.requirement.trim() || evidence.requirement.trim().length > 500) throw new Error('Cada evidencia requiere requirement de máximo 500 caracteres.');\n  if (typeof evidence.evidence_url !== 'string' || Number.isNaN(Date.parse(evidence.verified_at))) throw new Error('Cada evidencia requiere evidence_url y verified_at ISO.');\n  return { requirement: evidence.requirement.trim().replace(/\\s+/g, ' '), evidence_url: canonicalUrl(evidence.evidence_url), verified_at: new Date(evidence.verified_at).toISOString() };\n});\nconst company = $json.company.trim().replace(/\\s+/g, ' ');\nconst title = $json.title.trim().replace(/\\s+/g, ' ');\nconst countryCode = $json.country_code.trim().toUpperCase();\nconst modality = $json.modality.trim();\nconst canonical_url = canonicalUrl($json.job_url);\nconst dedupe_basis = `${normalizeText(company)}|${normalizeText(title)}|${countryCode.toLowerCase()}|${normalizeText(modality)}`;\nreturn [{ json: { source_key: $json.source_name.trim().toLowerCase(), source_reference: $json.source_reference.trim(), canonical_url, company, title, country_code: countryCode, location: ($json.location ?? '').trim().replace(/\\s+/g, ' '), modality, posted_at: $json.posted_at ?? null, vacancy_summary: summary, requirement_evidence, verified_at: new Date($json.verified_at).toISOString(), dedupe_basis, test_mode: $json.test_mode } }];"
+      },
+      "id": "c8d45974-075b-4889-9780-7f99999348c0",
+      "name": "Normalizar URL y clave de deduplicación",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -220,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "b1d0562f-8bd1-4f1a-99c5-fa7c722128a7",
+              "leftValue": "={{ $json.test_mode }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "d0f1b7d4-2736-4c5d-9656-2dc9707f4a95",
+      "name": "¿Modo de prueba?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        40,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "review_state",
+              "value": "pending_preview",
+              "type": "string"
+            },
+            {
+              "id": "2",
+              "name": "persistence",
+              "value": "skipped_test_mode",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "17196a39-9135-442b-b6d8-75376cb0be13",
+      "name": "Vista previa segura de revisión",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        300,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM career.ingest_opportunity_capture($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13);",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify([$json.source_key, $json.source_reference, $json.canonical_url, $json.company, $json.title, $json.country_code, $json.location, $json.modality, $json.dedupe_basis, $json.posted_at, $json.vacancy_summary, JSON.stringify($json.requirement_evidence), $json.verified_at]) }}"
+        }
+      },
+      "id": "196bcf22-4317-4f57-a1b3-b7f3f7fb2f40",
+      "name": "Persistir de forma idempotente en Postgres",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        300,
+        300
+      ],
+      "notes": "Después de importar, seleccionar una credencial Postgres/Supabase con mínimos privilegios. No hay credenciales en este archivo."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "3",
+              "name": "review_state",
+              "value": "={{ $json.review_state }}",
+              "type": "string"
+            },
+            {
+              "id": "4",
+              "name": "persistence",
+              "value": "idempotent_upsert",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "5ebebd2b-95cc-4871-bc5d-437ec9c74806",
+      "name": "Registrar resultado para revisión humana",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map((item) => ({ json: { ...item.json, next_action: 'human_review_only', email_sent: false, application_created: false } }));"
+      },
+      "id": "753c1c75-71aa-4f24-bc77-b28a5ced1889",
+      "name": "Cola de revisión sin envío",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        800,
+        200
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Ejecución manual de prueba": {
+      "main": [
+        [
+          {
+            "node": "Validar lote y cargar fixture",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Entrada webhook de fuentes aprobadas": {
+      "main": [
+        [
+          {
+            "node": "Validar lote y cargar fixture",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar lote y cargar fixture": {
+      "main": [
+        [
+          {
+            "node": "Normalizar URL y clave de deduplicación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizar URL y clave de deduplicación": {
+      "main": [
+        [
+          {
+            "node": "¿Modo de prueba?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Modo de prueba?": {
+      "main": [
+        [
+          {
+            "node": "Vista previa segura de revisión",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Persistir de forma idempotente en Postgres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vista previa segura de revisión": {
+      "main": [
+        [
+          {
+            "node": "Cola de revisión sin envío",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persistir de forma idempotente en Postgres": {
+      "main": [
+        [
+          {
+            "node": "Registrar resultado para revisión humana",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar resultado para revisión humana": {
+      "main": [
+        [
+          {
+            "node": "Cola de revisión sin envío",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "7c4617fb-5be7-4fcf-8f56-0f234acbe2bb",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

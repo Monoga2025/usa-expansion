@@ -1,0 +1,302 @@
+{
+  "name": "Career Opportunity Scoring MVP",
+  "nodes": [
+    {
+      "id": "score-001",
+      "name": "Inicio manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "score-002",
+      "name": "Cargar oportunidades pendientes",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "select q.review_queue_id, o.opportunity_id, o.company_name, o.title, o.canonical_url, o.country_code, o.location, o.modality, o.posted_at, o.vacancy_summary, o.requirement_evidence, o.requirements_verified_at from career.review_queue q join career.opportunities o on o.opportunity_id = q.opportunity_id where q.review_state = 'pending' order by q.priority desc, q.created_at asc limit 50;",
+        "options": {}
+      }
+    },
+    {
+      "id": "score-003",
+      "name": "Aplicar filtros obligatorios",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const summary = String(item.json.vacancy_summary ?? '').trim();\nconst evidence = Array.isArray(item.json.requirement_evidence) ? item.json.requirement_evidence : [];\nconst verifiedAt = Date.parse(item.json.requirements_verified_at ?? '');\nconst title = String(item.json.title ?? '').trim();\nconst company = String(item.json.company_name ?? '').trim();\nconst jobUrl = String(item.json.canonical_url ?? '').trim();\nconst modality = String(item.json.modality ?? 'desconocido').trim();\nconst text = `${title} ${summary}`.toLowerCase();\nconst reasons = [];\nconst validEvidence = evidence.filter((entry) => entry && typeof entry.requirement === 'string' && entry.requirement.trim() && /^https?:\\/\\/[^#\\s]+$/.test(String(entry.evidence_url ?? '')) && !Number.isNaN(Date.parse(entry.verified_at ?? '')));\nif (modality === 'presencial') reasons.push('presencial_o_residencia_incompatible');\nif (/must be authorized to work in|no sponsorship|sin patrocinio/.test(text)) reasons.push('autorizacion_laboral_restringida');\nif (/\\b([4-9]|[1-9][0-9])\\+?\\s+years?\\b|m[aá]s de 3 a[nñ]os/.test(text)) reasons.push('experiencia_requerida_supera_tres_anios');\nif (!company) reasons.push('empresa_no_verificable');\nif (!title) reasons.push('cargo_no_verificable');\nif (!jobUrl) reasons.push('canal_de_postulacion_no_verificable');\nif (summary.length < 20 || /<[^>]+>/.test(summary)) reasons.push('requirements_summary_no_verificable');\nif (evidence.length === 0 || validEvidence.length !== evidence.length || Number.isNaN(verifiedAt)) reasons.push('evidencia_de_requisitos_ausente_o_invalida');\nif (/pay a fee|payment required|send (your )?password|share credentials|pago requerido|env[ií]e.*contrase[nñ]a/.test(text)) reasons.push('solicitud_insegura_o_enganiosa');\nif (/research scientist|ml scientist|machine learning research|deep learning researcher/.test(text)) reasons.push('investigacion_ml_avanzada_fuera_del_posicionamiento');\nif (/\\b(senior|staff)\\b/.test(text)) reasons.push('senioridad_no_demostrable');\nitem.json.hard_filter_failed = reasons.length > 0;\nitem.json.hard_filter_reasons = reasons;\nitem.json.valid_requirement_evidence = validEvidence;\nreturn item;"
+      }
+    },
+    {
+      "id": "score-006",
+      "name": "Construir desglose y puntuar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        980,
+        420
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const data = item.json;\nconst summary = String(data.vacancy_summary ?? '').trim();\nconst title = String(data.title ?? '').toLowerCase();\nconst text = `${title} ${summary}`.toLowerCase();\nconst evidence = data.valid_requirement_evidence ?? [];\nconst scoredAt = new Date().toISOString();\nconst base = {rubric_version:'career/qualification-rubric.md', scored_at:scoredAt};\nif (data.hard_filter_failed) {\n  data.score = 0;\n  data.route = 'discard';\n  data.score_breakdown = {...base, problema_rol:{points:0,max:25,basis:'no evaluado: filtro obligatorio'}, stack_responsabilidades:{points:0,max:25,matches:[]}, evidencia_disponible:{points:0,max:15,basis:'no evaluada: filtro obligatorio'}, modalidad_elegibilidad:{points:0,max:15,basis:data.modality ?? 'desconocido'}, seniority_aprendizaje:{points:0,max:10,basis:'no evaluada: filtro obligatorio'}, ingles_colaboracion:{points:0,max:5,basis:'no evaluada: filtro obligatorio'}, empresa_oportunidad:{points:0,max:5,basis:'no evaluada: filtro obligatorio'}, total:0, decision:'discard', motivo:`filtro_obligatorio: ${data.hard_filter_reasons.join(',')}`};\n  return item;\n}\nlet problemRole = 0;\nif (/ai automation|automation engineer|integration engineer|implementation specialist|automation specialist|workflow automation/.test(text)) problemRole = 25;\nelse if (/\\b(automation|integration|implementation)\\b/.test(text)) problemRole = 20;\nelse if (/\\b(developer|operations|customer success)\\b/.test(text)) problemRole = 10;\nconst stackParts = [['n8n_o_workflows',5,/\\bn8n\\b|\\bworkflow/],['apis_o_webhooks',5,/\\bapi\\b|\\bwebhooks?\\b/],['llm_rag_o_agentes',4,/\\bllm\\b|\\brag\\b|\\bagents?\\b/],['postgres_o_supabase',4,/\\bpostgres(?:ql)?\\b|\\bsupabase\\b/],['typescript_node_o_javascript',4,/\\btypescript\\b|\\bnode\\.?js\\b|\\bjavascript\\b/],['crm_whatsapp_o_interfaces',3,/\\bcrm\\b|\\bwhatsapp\\b|\\binterfaces?\\b/]];\nconst stackMatches = stackParts.filter(([, , pattern]) => pattern.test(text));\nconst stack = Math.min(25, stackMatches.reduce((sum, [, points]) => sum + points, 0));\nconst evidencePoints = evidence.length >= 2 ? 15 : evidence.length === 1 ? 8 : 0;\nconst modalityPoints = ['remoto_colombia_latam','contractor_internacional'].includes(data.modality) ? 15 : ['hibrido','desconocido'].includes(data.modality) ? 8 : 0;\nconst seniority = /\\b(junior|associate|intern|contractor)\\b/.test(text) ? 10 : /\\bmid\\b/.test(text) ? 5 : 0;\nconst english = /\\b(b1|b2|intermediate english)\\b/.test(text) ? 5 : /\\benglish\\b|\\bingl[eé]s\\b/.test(text) ? 2 : 0;\nconst companyOpportunity = data.company_name && data.canonical_url ? (evidence.length >= 2 ? 5 : evidence.length === 1 ? 2 : 0) : 0;\nconst total = problemRole + stack + evidencePoints + modalityPoints + seniority + english + companyOpportunity;\nconst route = total >= 70 ? 'research' : total >= 55 ? 'human_review' : 'discard';\ndata.score = total;\ndata.route = route;\ndata.score_breakdown = {...base, problema_rol:{points:problemRole,max:25,basis:problemRole ? 'titulo_y_requirements_summary_verificables':'sin_hechos_suficientes'}, stack_responsabilidades:{points:stack,max:25,matches:stackMatches.map(([name])=>name)}, evidencia_disponible:{points:evidencePoints,max:15,basis:`${evidence.length} evidencia(s) fechada(s) verificable(s)`}, modalidad_elegibilidad:{points:modalityPoints,max:15,basis:data.modality ?? 'desconocido'}, seniority_aprendizaje:{points:seniority,max:10,basis:'titulo_y_requirements_summary'}, ingles_colaboracion:{points:english,max:5,basis:'requirements_summary'}, empresa_oportunidad:{points:companyOpportunity,max:5,basis:'empresa_canal_y_evidencia_verificables'}, total, decision:route, motivo:`score_${total}; ruta_${route}; evidencia_fechada_${evidence.length}`};\nreturn item;"
+      }
+    },
+    {
+      "id": "score-007",
+      "name": "Persistir score idempotente y enrutar",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1220,
+        420
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with saved_score as (select * from career.upsert_opportunity_score($1, $2::jsonb, $3::timestamptz)), updated_queue as (update career.review_queue q set priority = $4::smallint, review_state = case when $5 = 'discard' then 'discarded' else 'in_review' end, reviewed_at = case when $5 = 'discard' then now() else null end, updated_at = now() from saved_score s where q.opportunity_id = s.opportunity_id and q.review_state = 'pending' returning q.review_queue_id, q.opportunity_id, q.review_state, q.priority) select u.review_queue_id, u.opportunity_id, u.review_state, u.priority, s.score_breakdown, s.score_updated_at, $5::text as route from saved_score s join updated_queue u on u.opportunity_id = s.opportunity_id;",
+        "options": {
+          "queryReplacement": "={{ [$json.opportunity_id, JSON.stringify($json.score_breakdown), $json.score_breakdown.scored_at, $json.score, $json.route] }}"
+        }
+      }
+    },
+    {
+      "id": "score-008",
+      "name": "Enrutar por score",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1460,
+        420
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "research",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "research"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.route }}",
+                    "rightValue": "human_review",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "human_review"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      }
+    },
+    {
+      "id": "score-009",
+      "name": "Encolar investigación sin contacto",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1700,
+        320
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "stage-research",
+              "name": "next_stage",
+              "value": "research",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "score-010",
+      "name": "Encolar revisión humana",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1700,
+        420
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "stage-human",
+              "name": "next_stage",
+              "value": "human_review",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "score-011",
+      "name": "Registrar descarte por score",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1700,
+        520
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "stage-discard",
+              "name": "next_stage",
+              "value": "discard",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Inicio manual": {
+      "main": [
+        [
+          {
+            "node": "Cargar oportunidades pendientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cargar oportunidades pendientes": {
+      "main": [
+        [
+          {
+            "node": "Aplicar filtros obligatorios",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aplicar filtros obligatorios": {
+      "main": [
+        [
+          {
+            "node": "Construir desglose y puntuar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construir desglose y puntuar": {
+      "main": [
+        [
+          {
+            "node": "Persistir score idempotente y enrutar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persistir score idempotente y enrutar": {
+      "main": [
+        [
+          {
+            "node": "Enrutar por score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enrutar por score": {
+      "main": [
+        [
+          {
+            "node": "Encolar investigación sin contacto",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Encolar revisión humana",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Registrar descarte por score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+  "versionId": "score-20260906-durable",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}
